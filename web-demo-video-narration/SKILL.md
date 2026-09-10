@@ -44,6 +44,12 @@ fc-list | grep -i wqy                     # 中文字体(文泉驿正黑 /usr/sh
    PLAYWRIGHT_DOWNLOAD_HOST=https://cdn.npmmirror.com/binaries/playwright playwright install chromium
    ```
 9. **演示服务要先确认"哪个路径的进程"在跑**：端口被旧进程占用时新的 uvicorn 启动失败但旧进程仍在服务 —— 表现为接口 500/404 而日志显示 startup complete。先 `ps aux | grep app.py` 核对工作目录，清掉旧进程再从当前项目目录启动。
+10. **浅色界面的字幕必须用"黑字+白描边"，别指望 ASS 底框**：`BorderStyle=3 + BackColour` 在 libass 0.15.2 上**实测完全不生效**（alpha 设 0x46 或 0x26 都一样，不画底色框），白字压浅色界面等于隐形。正确做法：
+    - 浅色 UI：`PrimaryColour=&H00000000,OutlineColour=&H00FFFFFF,BorderStyle=1,Outline=3`（黑字白边，深浅底都清晰）
+    - 深色 UI：白字 + 黑边 `PrimaryColour=&H00FFFFFF,OutlineColour=&H00000000,Outline=2`
+    - 出片前先量一次界面底色（`a.mean()` >180 即为浅色 UI），别套用上一个项目的样式
+11. **查字幕要查对区间，别误判"没烧上"**：MarginV 与实际像素位置不是 1:1（1080p 下 MarginV=34 落在 y≈890~965，不在最底部），用"底部 10%"去找会扑空。定位真实字幕区最稳的办法是**有字幕/无字幕逐像素差分**。另注意：`ffmpeg -ss N -i in` 会让滤镜里的 `t` 归零，导致 `enable='between(t,...)'` 判断失真 —— 校验单帧时要么把 `-ss` 放到 `-i` 之后，要么直接整片渲染再看。
+12. **标题卡在浅色界面**：先用 `drawbox` 铺一块 `0xFFFFFF@0.90` 的半透明白底（`enable='between(t,0,6.2)'`），再 `drawtext` 用深色字，否则文字被页面内容淹没。
 8. **录制前先确认"在跑的是哪个路径的进程"**：演示服务若曾从旧目录启动，端口被它占着，新起的 uvicorn 会 `address already in use` 后退出，而接口表现为 **500/404**（旧进程仍用已不存在的路径服务静态文件）。先 `ps aux | grep app.py` 看工作目录、`ss -lntp | grep <端口>`，清掉旧进程再从当前项目目录启动，再开始录。
 9. **开头 2-4s 是页面加载黑屏**，别直接开录就交给用户 —— 用 drawtext 标题卡覆盖这段时间（见流程 §5），既遮黑屏又强化片头。
 
