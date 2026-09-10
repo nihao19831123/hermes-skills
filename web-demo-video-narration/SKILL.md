@@ -1,6 +1,14 @@
 ---
 name: web-demo-video-narration
-description: 给本地网页系统/数据大屏录制带中文配音解说的演示视频（比赛路演、项目汇报）。用 Playwright 按解说时间轴程序化驱动页面录屏 + edge-tts 中文配音 + ffmpeg 合成字幕/标题卡。触发场景：需要"展示视频/演示视频/路演视频/带解说的系统演示"，且系统是本地可访问的 Web 页面。
+description: 给本地网页系统/数据大屏录制带中文配音解说的演示视频（比赛路演、项目汇报）。Playwright 按解说时间轴程序化驱动页面录屏 + edge-tts 中文配音 + ffmpeg 合成字幕/标题卡。触发词：展示视频、演示视频、路演视频、系统亮点视频、要配音/解说、视频控制在N分钟。
+version: 1.0.0
+author: Hermes Agent
+license: MIT
+platforms: [linux, windows, macos]
+metadata:
+  hermes:
+    tags: [video, playwright, tts, ffmpeg, demo, screen-recording, narration]
+related_skills: [maplibre-gl-dashboards, strategy-simulation-engine]
 ---
 
 # 网页系统演示视频（配音+字幕）制作
@@ -30,7 +38,12 @@ fc-list | grep -i wqy                     # 中文字体(文泉驿正黑 /usr/sh
    **为什么不能直接调同一个 API**：前端往往把参数重新包装后再发（实测 `fetch(..., body: JSON.stringify({params: p}))`，且滑块数值 `/100` 后传 0.2 而不是 20）。直接调 `/api/...` 会得到**另一套数字**（本会话直接调得累计门诊 5.76 万、界面实算 4.6 万，差 25%）。所以：先按真实交互流程跑一遍、抓面板文本，再写解说词；录完抽帧回看时数字与解说要对得上，否则答辩会被抓。
 5. 页面里很多 `window.__xxx()` 全局函数挂在 `window` 上，可直接 `page.evaluate`/点击调用，比点 DOM 稳。
 6. 时长控制：中文 edge-tts 约 5.3 字/秒（0% 语速）。超时优先**提语速**（`--rate=+15%` 约可压缩 13%），其次删文案。
-7. **输出的 xlsx/mp4 若被 Excel/播放器占用会 `PermissionError`，**换成 v2/v3 新文件名**输出，别覆盖。
+7. 输出的 xlsx/mp4 若被 Excel/播放器占用会 `PermissionError`，**换成 v2/v3 新文件名**输出，别覆盖。
+8. **Playwright 浏览器版本要与包版本匹配**：报 `Executable doesn't exist at .../chromium_headless_shell-1234` 时，用国内镜像秒下：
+   ```bash
+   PLAYWRIGHT_DOWNLOAD_HOST=https://cdn.npmmirror.com/binaries/playwright playwright install chromium
+   ```
+9. **演示服务要先确认"哪个路径的进程"在跑**：端口被旧进程占用时新的 uvicorn 启动失败但旧进程仍在服务 —— 表现为接口 500/404 而日志显示 startup complete。先 `ps aux | grep app.py` 核对工作目录，清掉旧进程再从当前项目目录启动。
 8. **录制前先确认"在跑的是哪个路径的进程"**：演示服务若曾从旧目录启动，端口被它占着，新起的 uvicorn 会 `address already in use` 后退出，而接口表现为 **500/404**（旧进程仍用已不存在的路径服务静态文件）。先 `ps aux | grep app.py` 看工作目录、`ss -lntp | grep <端口>`，清掉旧进程再从当前项目目录启动，再开始录。
 9. **开头 2-4s 是页面加载黑屏**，别直接开录就交给用户 —— 用 drawtext 标题卡覆盖这段时间（见流程 §5），既遮黑屏又强化片头。
 
