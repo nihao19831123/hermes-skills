@@ -1,0 +1,84 @@
+# 阶段 5–6：演示保障 + 个体级蜂群前端（2026-09-19 实测）
+
+适用：把仿真引擎接进平台页面（蜂群/点阵视图），并做「现场不出岔子」的保障（预生成回放、降级演练、promote）。
+
+---
+
+## 1. 前端页面「脚本没跑完」的系统排查法（本轮真凶就在这）
+
+**症状**：页面部分功能生效（下拉框填好了、某段文案渲染了），但**末尾的验收钩子 `window.__x` 不存在**，
+`boot()` 也没执行；浏览器只报一个 message 为空的 exception。
+
+排查顺序（照做，通常 10 分钟定位）：
+
+1. **先验语法**：把内联脚本抽出来 `node --check`。
+   ```bash
+   python3 -c "import re;h=open('page.html',encoding='utf-8').read();open('/tmp/p.js','w').write(re.findall(r'<script>(.*?)</script>',h,re.S)[-1])"
+   node --check /tmp/p.js     # 语法错会给出精确行号，本轮抓到 'Identifier already declared' 和括号不配对
+   ```
+2. **在 `<head>` 里加早期错误监听**（能拿到 message + 文件 + 行列号；页面尾部注册的监听器抓不到加载期错误）：
+   ```html
+   <script>window.addEventListener('error',e=>{window.__earlyErr=(e.message||'(空)')+' @'+e.filename+':'+e.lineno+':'+e.colno;});</script>
+   ```
+3. **验收钩子尽早挂**：函数声明会提升，所以在脚本**靠前**（拿到状态对象后立刻）就
+   `window.__x = {get S(){return S;}, fn1, fn2}`，末尾再刷新一次——这样任何后续异常都不会把钩子吞掉。
+4. **启动序列包 try/catch** 并记录：`try{...}catch(e){window.__bootErr=String(e.stack||e)}`，另加 `window.__boot={t:0,err:null}` 计数。
+5. 真凶通常是**初始化期的断言读到 undefined**：本轮是 `updBadge()` 里 `S.affectedSet.size`
+   （数据未加载时 `affectedSet` 还不存在）→ 抛错 → 它后面的整个启动序列都没跑。加一行
+   `if(!S.meta || !S.affectedSet){ badge.textContent='等待运行…'; return; }` 解决。
+
+**教训**：页面首次加载时（无数据）与加载后（有数据）是两条完全不同的执行路径，两条都要走一遍再交付。
+
+## 2. FastAPI 路由顺序：`GET /{run_id}` 必须放最后
+
+新增 `GET /pregen`、`/pregen/{key}`、`/solve/list` 之后，`GET /{run_id}`（同段数）会先命中并把
+`run_id="pregen"` 拿去转 int → **422**。把通用回放路由挪到文件**最后**、并加注释说明原因。
+
+## 3. MapLibre 视图的三个坑
+
+1. **就绪守卫别用 `map.loaded()`**：镜头移动/缩放中它会短暂返回 false，导致守卫误判"未就绪"而不刷新
+   （症状：切到地图视图后个体点数为 0，手工调一次绘制函数就有）。守卫应判断 **source 是否存在**：
+   `!!(S.map && S.map.getSource('streets') && S.map.getSource('agents') && S.map.getSource('wave'))`。
+2. 街道多边形与引擎街道的顺序/命名要**显式对齐**：不要假设两边数组同序，
+   用名称映射（`nameToSi`）或按质心最近匹配；聚合键（`bySt[si]`）一律以引擎 `street_table` 为准。
+3. 逐帧换数据用 `source.setData()`（134 街道 / 几千点毫无压力）；波前用一个 LineString 圆环逐帧重算，
+   半径按经纬度换算（`km/89.6` 经度、`km/111` 纬度）即可。
+
+## 4. 浏览器客观验收（没有截图工具也能验视觉）
+
+`cua-driver` 不可用时，用**画布像素统计 + 数据源要素数**代替肉眼：
+```js
+const d = ctx.getImageData(0,0,cv.width,cv.height).data; let teal=0;
+for(let i=0;i<d.length;i+=4){ if(d[i+1]>150 && d[i+2]>120 && d[i]<110) teal++; }
+// 断言：年份推进后青绿像素显著增加（实测 12,003 → 13,632）=“引力增强”真的画出来了
+S.map.getSource('agents')._data.features.length   // 断言地图个体点数 = 智能体数
+S.map.zoomTo(z+2); S.map.getZoom() === z+2        // 断言地图可独立缩放
+```
+另外：console 表达式里**别写 `//` 注释和模板里的特殊字符**（工具包装会把它变成语法错误），
+简单表达式优先。
+
+## 5. ①焦点口径的现实：真实渗透率是个位数，别指望「整块变绿」
+
+实测：我院渗透率个位数百分比 → **个体级抽样选择**的人数逐年几乎不动（2,635 个里 109 → 114 人），
+"全屏大面积变绿"在真实口径下不存在。可行的组合方案（本轮已落地）：
+- **焦点口径**：默认只显示被战略触动的个体（`|p_end − p_base| ≥ 阈值`，滑块可调），徽标常驻
+  「仅显示被触动的 X / 全部 Y」，其余用极淡色作背景层；
+- **期望概率口径**：用后端逐年个体概率 `p_self_hist` 做灰→青绿渐变（讲"引力增强"），
+  与"抽样选择"三色模式并列可切换；
+- 两者都要在界面标注当前口径，**不要靠夸大份额**去制造观感。
+为了让前端有概率可用，引擎帧数据要加 `p_self_hist`（`want_prob=True` 时附带，约 7 字节 × 个体 × 年）。
+
+## 6. promote（把推演存为正式方案）的落地要点
+
+- 先把结果**映射成既有前端/报告能消费的结构**（老结构：`action_cn/summary/years/top_streets/risks`），
+  再 INSERT 既有方案库表；原始口径全留在 `agent` 子键下。这样历史方案库、单方案报告零改动即可用。
+- 映射时**注意字段所在层级**：本项目 `radius80/hri` 在 `interval`（即 `rec["metrics"]`）内，
+  从顶层读会得到 None（模板里没填值 → 报告出现"— km"，我踩过一次）。
+- 逐年只有期末值的指标（半径/HRI），**宁可留空也不要插值编造**，并在 note 里写明"未逐帧记录"。
+- 结果库建 `promotions` 留痕表（run_id → config_id），业务库写入仅限这一个端点、只 INSERT。
+
+## 7. 降级演练（现场保命）要真的跑一遍并留痕
+
+`A 智能体推演 → B 老引擎 → C 预生成回放` 三级都要实测耗时并写库（本轮 A 0.58s / B 0.06s / C 0.01s，
+C 与 A 一致度 1.02%，差异来自精度档）。预生成集（4 场景 + 旗舰场景帧数据，190 KB）构建 9.3s，
+放在后端目录里，断网/无算力时页面直接回放，数字与实时推演同源同参。

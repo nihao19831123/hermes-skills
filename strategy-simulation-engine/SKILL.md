@@ -136,6 +136,24 @@ app.py                  # /api/strategy/run|compare|list|{id}|delete + /api/hosp
   - **新增空间指标口径**：80% 半径必须由分布重算——**方向可能与老引擎相反**（本项目实测专科提升使半径
     14.90→14.46km 收缩、医联体→24~29km 扩张）；HRI **全域口径恒为 1**，作为求解目标时必须强制选定区域。
   - **留痕**：反解/寻优结果进独立结果库新表 `solve_runs`（source=api/selftest/gui），业务库仍只读。
+- **阶段 5–6 已落地（2026-09-19）**：① 阶段 5 = 预生成结果集 + 三级降级演练（A 智能体 0.58s → B 老引擎 0.06s → C 回放 0.01s，留痕 `drills` 表）
+  + `promote`（推演存为正式方案，映射成既有 `action_cn/summary/years/top_streets/risks` 结构后只 INSERT 既有方案库三表）
+  + 精度档/缓存/防抖/单一事实来源；② 阶段 6 = `GET /swarm`（`backend/agent_swarm.html`，单文件离线自包含）：
+  ① 人群迁徙 ② 地图波前（MapLibre 134 街道 + 2,635 个体点 + 独立缩放）⑦ 街道构成（134 行构成条，点行进钻取）⑧ 单街道钻取 + D1 个体决策卡，
+  数据 100% 取自 `/api/strategy/agent/*`（前端零效用计算）。
+  **必须记住的五条，细节见 `references/2026-09-agent-stage5-6-drill-and-swarm-frontend.md`**：
+  - **前端「脚本没跑完」的排查法**（本轮真凶）：`node --check` 验内联脚本语法 → `<head>` 里加早期 error 监听（拿 message+行列号）→
+    **验收钩子尽早挂**（函数声明提升，末尾再刷新）→ 启动序列包 try/catch 记错 → 真凶常是初始化期读 undefined
+    （本项目 `updBadge()` 读 `S.affectedSet.size`，抛错吞掉整个启动序列）。**页面"无数据"与"有数据"两条路径都要走一遍再交付**。
+  - **FastAPI 路由顺序**：`GET /{run_id}` 必须**最后**声明，否则会吞掉同段数的 `/pregen` 等固定路径返回 422。
+  - **MapLibre 三坑**：就绪守卫别用 `map.loaded()`（镜头移动中会 false，症状是切到地图后点数为 0）→ 判 source 是否存在；
+    街道多边形与引擎街道**按名称映射**（别假设同序）；逐帧换数据用 `setData()`，波前用 LineString 圆环逐帧重算。
+  - **①焦点口径的现实**：真实渗透率个位数 → 抽样选择人数几乎不动（2,635 里 109→114），"整块变绿"不存在；
+    必须"焦点口径 + 期望概率口径（后端 `p_self_hist` 逐年概率、`want_prob=True`）+ 界面标注口径"组合，不能靠夸大份额。
+  - **promote 映射坑**：字段层级要看准（`radius80/hri` 在 `interval` 内，从顶层读会得到 None → 报告显示"— km"）；
+    逐年只有期末值的指标宁可留空也不插值编造。
+  - **无截图工具时的视觉验收**：画布 `getImageData` 像素统计（青绿像素随年份增加）+ `getSource('agents')._data.features.length`
+    + `zoomTo` 后 `getZoom()` 断言，比肉眼可靠；console 表达式里别写 `//` 注释。
 - **在用户仓库里跑脚本的零污染纪律**：`export PYTHONDONTWRITEBYTECODE=1`（否则刷新被 git 跟踪的 `__pycache__/*.pyc`，`git status` 里出现一堆 M 吓人）；证明\"没改现有文件\"用三条命令：`git status --porcelain | grep <新文件>`、`find . -newermt '-40 minutes' -type f ! -name '*.pyc'`、`stat -c '%y %n'` 关键源文件（应仍是旧日期）。
 
 ## 项目实例（青岛医院平台 2026-09）
